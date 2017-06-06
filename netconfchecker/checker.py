@@ -9,7 +9,7 @@ import shutil
 import sys
 from jnpr.junos.exception import ConnectClosedError
 
-from netconfchecker.juniper.device_manager import DeviceManager
+from netconfchecker.juniper.manager import JuniperManager
 from netconfchecker.config import DEVICES
 
 
@@ -38,7 +38,7 @@ class CommitCheck():
         self.get_templates(path)
         # Setup device(s)
         self.device_name = os.environ.get('DEVICE', 'juniper') 
-        self.manager = DeviceManager()
+        self.juniper = JuniperManager()
         if not DEVICES.has_key(self.device_name):
             raise Exception('There is no config for device %s' % self.device_name)
         config = DEVICES[self.device_name]
@@ -47,13 +47,13 @@ class CommitCheck():
             for template in self.list_templates():
                 config['host'] = self._get_device_name(template)
                 try:
-                    self.manager.setup_device(config, config['host'])
+                    self.juniper.setup_device(config, config['host'])
                 except:
                     pass
-            if self.manager.devices:
-                self.manager.devices[self.device_name] = self.manager.devices[self.manager.devices.keys()[0]]
+            if self.juniper.devices:
+                self.juniper.devices[self.device_name] = self.juniper.devices[self.juniper.devices.keys()[0]]
         else:
-            self.manager.setup_device(config, self.device_name)
+            self.juniper.setup_device(config, self.device_name)
                 
     def get_templates(self, path):
         """Check we have generated all the configs"""
@@ -115,16 +115,29 @@ class CommitCheck():
             template_name = '/'.join(template.split('/')[-2:])
         except:
             template_name = template
-        try:
-            self.manager.close_device_config(device)
-        except:
-            pass
-        
-	try:
-            load_error = self.manager.merge_template_config(device, template, 'text', mode) 
-	except ConnectClosedError, err: 
-            self.manager.open_device_config(device) 
-	    load_error = self.manager.merge_template_config(device, template, 'text', mode)
+        vendor, fmt = self.get_config_type(template)
+        manager = None
+        load_error = None
+        if vendor:
+            if vendor == 'empty':
+                load_error = 'Template %s is empty so it is not loaded' % template_name
+            else:
+                manager = getattr(self, vendor, None)
+        else:
+            load_error = 'Cannot determine vendor from template %s' % vendor
+        if not manager:
+            if not load_error:
+                load_error = 'Cannot load template %s to device - it is for %s - there is no device manager for %s' % (template_name, vendor, vendor)
+        else:
+            try:
+                manager.close_device_config(device)
+            except:
+                pass
+            try:
+                load_error = manager.load_template_config(device, template, fmt, mode) 
+            except ConnectClosedError, err: 
+                manager.open_device_config(device) 
+                load_error = manager.load_template_config(device, template, fmt, mode)
         if load_error:
             results.append('LOAD FAIL %s: %s' % (device.facts['hostname'], template_name))
             results.append(load_error)
@@ -132,16 +145,48 @@ class CommitCheck():
     
     def _commit_template(self, device, template, check_only=True):
         results = []
-        commit_error = self.manager.commit_template_config(device, check_only)
+        commit_error = self.juniper.commit_template_config(device, check_only)
         if commit_error:
             results.append('COMMIT FAIL %s: %s' % (device.facts['hostname'], template))
             results.append(commit_error)
         try:
-            self.manager.close_device_config(device)
+            self.juniper.close_device_config(device)
         except:
             pass
         return results
 
+    def get_config_type(self, template):
+        """Work out the type of the config and the vendor"""
+        config = None
+        if os.path.exists(template):
+            with open(template) as fileh:
+                config = fileh.read()
+                config = config.strip()
+        if not config:
+            return 'empty', None
+        else:
+            ### Check for native conf formats first ... its quicker
+            if config.startswith('{') or config.startswith('['):
+                if config.find("juniper") > -1:
+                    return "juniper", "json"
+                elif config.find("cisco") > -1:
+                    return "cisco", "json"
+                else:
+                    return "unknown", "json"
+            # TODO try full json, yaml and jxmlease load and then find vendor identifiers
+            # note that this is not straight forward since it could be Yang or Native but in any of these formats
+            if config.startswith("<"):
+                if config.find("xmlns:junos") > -1:
+                    return "juniper", "xml"
+                else:
+                    return "unknown", "xml"
+            if config.find('{') > -1:
+               return "juniper", "text"
+            if config.count("!\n") > 1 or config.count(" - ") > -1:
+                return "cisco", "text"
+            # DEBUG: return config, "unknown"
+        return None, None
+            
     @staticmethod
     def _get_device_name(template):
         if template.find('/') > -1:
@@ -157,13 +202,13 @@ class CommitCheck():
         else:
             name = self.device_name
         # Assume if there is no specific device related to a template name, just load to the default test device
-        if not self.manager.devices.has_key(name):
+        if not self.juniper.devices.has_key(name):
             name = self.device_name
-        device = self.manager.devices[name] 
+        device = self.juniper.devices[name] 
         # Use cu attribute as a marker that the device is already open ... if no cu, open it
         # if not hasattr(device, 'cu'):
         try:
-            connect_error = self.manager.open_device_config(device)
+            connect_error = self.juniper.open_device_config(device)
         except Exception, connect_error:
             pass
         if connect_error:
@@ -225,7 +270,7 @@ class CommitCheck():
             pass
         assert not connect_error, connect_error
         try:
-            success, info = self.manager.summary_info(device)
+            success, info = self.juniper.summary_info(device)
         except Exception, err:
             info = err
             success = False
@@ -244,7 +289,6 @@ class CommitCheck():
             print 'No parts templates so check parts for each switch type tests are skipped'
         results = []
         device = self.get_device(self.device_name)
-        assert device            
         for template_parts in templates:
             fails = []
             parts = os.listdir(template_parts)

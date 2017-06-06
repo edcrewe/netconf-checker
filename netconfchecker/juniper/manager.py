@@ -20,6 +20,7 @@ import jxmlease
 
 from netconfchecker.exceptions import DoneWithDevice, LoadNotOKError
 from netconfchecker.config import KEY_HOME, DEVICES
+from netconfchecker.device_manager import DeviceManager
 
 __author__ = 'Ed Crewe <edmundcrewe@gmail.com>'
 __docformat__ = 'plaintext'
@@ -29,28 +30,12 @@ __date__ = '2017-02-09'
 LOGGER_BASENAME = 'netconftest.device_manager'
 LOGGER = logging.getLogger(LOGGER_BASENAME)
 
-class DeviceManager(object):
+class JuniperManager(DeviceManager):
     """Manages a racks switches or a single switch for configuration"""
+    vendor = 'juniper'
     devices = {}
     junos_ignore = ['warning: mgd: statement has no contents; ignored',
                     'error: error recovery ignores input until this point']
-    
-    def __init__(self, loglevel='CRITICAL'):
-        """Set up the devices metadata ready for login"""
-        self.parser = jxmlease.EtreeParser()
-        self.logger = logging.getLogger('{base}.{suffix}'.format(base=LOGGER_BASENAME, suffix=self.__class__.__name__))
-        ch = logging.StreamHandler(sys.stdout)
-        self.loglevel = loglevel
-        ch.setLevel(self.loglevel)
-        ### Default ncclient logging is too verbose so set it to same level as this class
-        ncmanager.logger.setLevel(self.loglevel)
-        ncmanager.transport.ssh.logger.setLevel(self.loglevel)
-        ncmanager.transport.session.logger.setLevel(self.loglevel)        
-        ncmanager.operations.rpc.logger.setLevel(self.loglevel)        
-        ###
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        ch.setFormatter(formatter)
-        self.logger.addHandler(ch)
 
     def setup_device(self, config, name=None):
         """Configure a dictionary of device settings for connecting from config or supplied dictionary"""
@@ -97,7 +82,7 @@ class DeviceManager(object):
         connect_error = self.open_device_config(device)
         if connect_error:
             return connect_error
-        err = self.merge_template_config(self, device, template_path, fmt)
+        err = self.load_template_config(self, device, template_path, fmt)
         if err:
             return err
         else:
@@ -137,7 +122,7 @@ class DeviceManager(object):
         if connect_error:
             return connect_error
         commit_error = ''
-        load_error = self.merge_template_config(device, template_path)
+        load_error = self.load_template_config(device, template_path)
         if load_error:
             return load_error
         else:
@@ -187,7 +172,7 @@ class DeviceManager(object):
             return "Unknown error occurred loading configuration."
     
     def close_device_config(self, device):
-        """Close device opened by merge_template_config"""
+        """Close device opened by load_template_config"""
         try:
             device.rpc.close_configuration()
             return True
@@ -195,7 +180,7 @@ class DeviceManager(object):
             self.logger(err)
         return False
         
-    def merge_template_config(self, device,
+    def load_template_config(self, device,
                               template_path,
                               fmt='text', mode='normal'):
         """Open device and merge template config returning any error if it occurs
