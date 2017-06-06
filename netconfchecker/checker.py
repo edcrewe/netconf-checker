@@ -37,7 +37,7 @@ class CommitCheck():
         self.data_path = path 
         self.get_templates(path)
         # Setup device(s)
-        self.device_name = os.environ.get('DEVICE', 'olive1') 
+        self.device_name = os.environ.get('DEVICE', 'juniper') 
         self.manager = DeviceManager()
         if not DEVICES.has_key(self.device_name):
             raise Exception('There is no config for device %s' % self.device_name)
@@ -119,6 +119,7 @@ class CommitCheck():
             self.manager.close_device_config(device)
         except:
             pass
+        
 	try:
             load_error = self.manager.merge_template_config(device, template, 'text', mode) 
 	except ConnectClosedError, err: 
@@ -277,7 +278,7 @@ class CommitCheck():
     def check_config_diff(self):
         """Load the config to the each sample device and confirm that they are the correct host and 
            that there is no diff between the candidate and host config
-           Note: this should fail for the single olive switch 
+           Note: this should fail for the single vendor switch VMs 
         """
         templates = self.list_templates(sample=True, parts=False)
         results = []
