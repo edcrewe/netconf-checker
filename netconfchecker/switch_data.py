@@ -8,7 +8,7 @@ detect what format its dealing with and do the rest.
 import os
 from datadiff.tools import assert_equal
 
-from netconftest.juniper_dict import JuniperDict
+from netconfchecker.juniper.conf_dict import JuniperDict
 
 
 class SwitchData(object):
