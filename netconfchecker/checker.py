@@ -257,11 +257,17 @@ class CommitCheck():
                     else:
                         if not parts:
                             passed.append(device_name)
-        if results:
-            report = self.report(results)
-        if not report.count(' FAIL')==0:
-            print '%s load and %s commit fails were found' % (report.count('LOAD FAIL'),
-                                                                     report.count('COMMIT FAIL'))
+        report = self.report(results)
+        if parts:
+            conf_type = "%s devices partial" % len(self.part_templates)
+        else:
+            conf_type = "%s devices full" % len(self.full_templates)
+        if report.count(' FAIL')==0:
+            print "All %s configs passed load and commit checks" % conf_type
+        else:
+            print 'For %s configs %s load and %s commit fails were found' % (conf_type,
+                                                                             report.count('LOAD FAIL'),
+                                                                             report.count('COMMIT FAIL'))
         return passed
             
     def run(self):
@@ -269,9 +275,9 @@ class CommitCheck():
         self.check_templates_available()
         self.check_device_available()
         passed = self.check_templates(self.full_templates)
-        print self.marker
-        print self.marker
-        self.check_templates(self.part_templates, skip=passed, parts=True)
+        if self.part_templates:
+            print self.marker
+            self.check_templates(self.part_templates, skip=passed, parts=True)
         
     def check_templates_available(self):
         """Test that the templates are ready for loading
