@@ -279,7 +279,7 @@ class CommitCheck():
         Note we may always have templates from fixture
         so to check if build works, count sample parts tmp folders
         """
-        assert len(self.full_templates) + len(self.part_templates)>3, 'Should be at least 3 templates found to load and check at %s' % self.paths
+        assert len(self.full_templates) + len(self.part_templates)>1, 'Should be at least 2 templates found to load and check at %s' % self.paths
     
     def check_device_available(self):
         """Test that we can connect to the device being used for commit checking"""
