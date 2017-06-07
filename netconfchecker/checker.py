@@ -15,15 +15,14 @@ from netconfchecker.config import DEVICES
 
 class CommitCheck():
     """Test class for inputbuilder use A-Z module name prefix for sequence"""
-    tmpl_types = ['leaf', 'spine', 'fabric', 'dci', 'tr']
-    templates = []
+    full_templates = []
+    part_templates = []
     configs = []
     fail_fast = False
     marker = '----'
     many_devices = False
     
-
-    def __init__(self, path=""):
+    def __init__(self, paths=[]):
         """
         Set up environment, fixtures and run functional cmd.
 
@@ -31,11 +30,12 @@ class CommitCheck():
         This is where you can setup things that you use throughout the tests. 
         This method is called before all tests
         """
-        if not path:
-            path = '/Users/ecrewe/tmp'
+        if not paths:
+            print "You must supply one or more paths to the config files folder(s)"
+            return
         # Setup templates
-        self.data_path = path 
-        self.get_templates(path)
+        self.paths = paths 
+        self.get_templates(paths)
         # Setup device(s)
         self.device_name = os.environ.get('DEVICE', 'juniper') 
         self.juniper = JuniperManager()
@@ -55,34 +55,36 @@ class CommitCheck():
         else:
             self.juniper.setup_device(config, self.device_name)
                 
-    def get_templates(self, path):
-        """Check we have generated all the configs"""
-        self.tmp_path = path
+    def get_templates(self, paths):
+        """Check we have got all the configs
+           If there is one config per device they should be named by the device hostname with a suffix such as .conf
+           If there is more than one config per device then they can be named whatever but should be in a folder named by the device hostname
+           On that basis there are two lists of paths that should be handled, full or partial config ones
+           If there are both types, then only if the full config load fails will the partial configs be checked
+        """
         self.use_fixtures = False
         if self.use_fixtures:
             #FIXME - Note this can remove templates that were built by other means - be better to use different path for fixtures?
-            if os.path.exists(self.tmp_path):
-                shutil.rmtree(self.tmp_path)
+            if os.path.exists(self.path_parts):
+                shutil.rmtree(self.path_parts)
             self.extract_fixture()
-        self.templates = self.list_templates()
-        self.sample_templates = self.list_templates(sample=True, parts=True)
+
+        self.list_templates(paths)
         
-    def list_templates(self, sample=False, parts=False):
+    def list_templates(self, paths):
         """run integrator build.sh (could skip final rpm part but it doesnt add much to the time so maybe just use build.sh)"""
-        tmp_path = self.tmp_path
-        if parts and not self.use_fixtures:
-            tmp_path = tmp_path.replace('/templates', '/tmp')
-        if not os.path.exists(tmp_path):
-            return []
-        templates = []
-        all_templates = [os.path.join(tmp_path, tmpl) for tmpl in os.listdir(tmp_path)]
-        for tmpl_type in self.tmpl_types:
-            for template in all_templates:
-                if template.find('-%s-' % tmpl_type) > -1:
-                    templates.append(template)
-                    if sample:
-                        break
-        return templates
+        self.full_templates = []
+        self.part_templates = []        
+        for path in paths:
+            for filefolder in os.listdir(path):
+                if filefolder.startswith('.') or filefolder.endswith('~'):
+                    continue
+                fullpath = os.path.join(path, filefolder)
+                if os.path.isdir(fullpath):
+                    self.part_templates.append(fullpath)
+                else:
+                    self.full_templates.append(fullpath)
+        return
         
     def report(self, results):
         """Generate notification report"""
@@ -189,9 +191,12 @@ class CommitCheck():
             
     @staticmethod
     def _get_device_name(template):
+        """Assume that full configs are host_name.ext so remove the extension
+           Partial configs are in a folder named as host_name so just return it
+        """
         if template.find('/') > -1:
             pathlist = template.split('/')
-            return pathlist[-1].replace('.conf', '')
+            return '.'.join(pathlist[-1].split('.')[-1])
         else:
             return template
         
@@ -215,9 +220,10 @@ class CommitCheck():
             raise Exception(connect_error)
         return device
 
-    def check_templates(self, templates, mode):
+    def check_templates(self, templates, mode='normal', skip=[], parts=False):
         """Run a check of all templates passed in using the config edit mode specified"""
         results = []
+        passed = []
         try:
             device = self.get_device(self.device_name)
             # DEBUG results.append('Device Connect SUCCESS: %s' % self.device_name)
@@ -228,30 +234,44 @@ class CommitCheck():
         for template in templates:
             # Lets not test the type sample templates twice - except we should in case they are empty
             # if template not in self.sample_templates:
-            if self.many_devices:
-                try:
-                    device = self.get_device(template)
-                    # results.append('Device Connect SUCCESS: %s' % device.facts['hostname'])
-                except Exception, connect_error:
-                    results.append('Device Connect FAIL: %s - %s' % (self._get_device_name(template), connect_error))
-		    continue # Do not try and load to different device if many_devices test
-            fails = self.check_template(device, template, mode)
-            if fails:
-                results.extend(fails)
-                results.append(self.marker)
-                if self.fail_fast:
-                    assert not fails
-        report = self.report(results)
+            device_name = self._get_device_name(template)
+            if device_name not in skip:
+                if self.many_devices:
+                    try:
+                        device = self.get_device(template)
+                        # results.append('Device Connect SUCCESS: %s' % device.facts['hostname'])
+                    except Exception, connect_error:
+                        results.append('Device Connect FAIL: %s - %s' % (device_name, connect_error))
+                        continue # Do not try and load to different device if many_devices test
+                if parts:
+                    part_templates = [os.path.join(template, tmpl) for tmpl in os.listdir(template)]
+                else:
+                    part_templates = [template]
+                for template in part_templates:
+                    fails = self.check_template(device, template, mode)
+                    if fails:
+                        results.extend(fails)
+                        results.append(self.marker)
+                        if self.fail_fast:
+                            assert not fails
+                    else:
+                        if not parts:
+                            passed.append(device_name)
+        if results:
+            report = self.report(results)
         if not report.count(' FAIL')==0:
             print '%s load and %s commit fails were found' % (report.count('LOAD FAIL'),
                                                                      report.count('COMMIT FAIL'))
-
+        return passed
+            
     def run(self):
         """Run the full process of load and commit check and diff if available for report"""
         self.check_templates_available()
         self.check_device_available()
-        self.check_parts_for_each_type()
-        self.check_config_diff()        
+        passed = self.check_templates(self.full_templates)
+        print self.marker
+        print self.marker
+        self.check_templates(self.part_templates, skip=passed, parts=True)
         
     def check_templates_available(self):
         """Test that the templates are ready for loading
@@ -259,7 +279,7 @@ class CommitCheck():
         Note we may always have templates from fixture
         so to check if build works, count sample parts tmp folders
         """
-        assert len(self.templates)>5, 'Should be at least 5 templates found to load and check for a unit at %s' % self.tmp_path
+        assert len(self.full_templates) + len(self.part_templates)>3, 'Should be at least 3 templates found to load and check at %s' % self.paths
     
     def check_device_available(self):
         """Test that we can connect to the device being used for commit checking"""
@@ -279,39 +299,45 @@ class CommitCheck():
         if not success:
             raise Exception(info)
     
-    def check_parts_for_each_type(self):
-        """Load and commit check each part of each type of config
-        
-        Get sample config fails in detail first
+    def check_parts_for_switch_types(self, skip=[], types=['-leaf-', '-spine-', '-fabric-', '-dci-', '-tr-']):
+        """Load and commit check each part of each type of config 
+           Assumes that the switches have host names with an identifying type in them
+           Use to get sample config fails in detail first
         """
-        templates = self.sample_templates
+        templates = []
+        for tmpl_type in self.tmpl_types:
+            for template in self.part_templates:
+                if template.find('%s' % tmpl_type) > -1:
+                    templates.append(template)
+                    break
         if templates==[]:
-            print 'No parts templates so check parts for each switch type tests are skipped'
+            print 'No parts templates match the supplied types, so check parts for each switch type tests are skipped'
         results = []
         device = self.get_device(self.device_name)
         for template_parts in templates:
-            fails = []
-            parts = os.listdir(template_parts)
-            if parts:
-                if self.many_devices:
-                    device = self.get_device(template_parts)
-                for template in parts:
-                    fail = self._load_template(device, os.path.join(template_parts, template), 'normal')
-                    if fail:
-                        fails.extend(fail)
-            else:
-                raise Exception('No template found in parts directory for %s' % template_parts)
-            # commit check after all parts loaded        
-            fail = self._commit_template(device, os.path.join(template_parts, template))
-            if fail:
-                fails.extend(fail)
-            if fails:
-                results.extend(fails)
-                results.append(self.marker)
-                # Fail at first failing set of parts templates
-                if self.fail_fast:
-                    report = self.report(fails)
-                    assert not fails, 'Check of parts for sample %s template failed' % template_parts.split('/')[-1]
+            if template_parts not in skip:
+                fails = []
+                parts = os.listdir(template_parts)
+                if parts:
+                    if self.many_devices:
+                        device = self.get_device(template_parts)
+                    for template in parts:
+                        fail = self._load_template(device, os.path.join(template_parts, template), 'normal')
+                        if fail:
+                            fails.extend(fail)
+                else:
+                    raise Exception('No template found in parts directory for %s' % template_parts)
+                # commit check after all parts loaded        
+                fail = self._commit_template(device, os.path.join(template_parts, template))
+                if fail:
+                    fails.extend(fail)
+                if fails:
+                    results.extend(fails)
+                    results.append(self.marker)
+                    # Fail at first failing set of parts templates
+                    if self.fail_fast:
+                        report = self.report(fails)
+                        assert not fails, 'Check of parts for sample %s template failed' % template_parts.split('/')[-1]
         report = self.report(results)
             # If our sample's are failing for parts, likely all will fail - so fail fast for check all
             # self.fail_fast = True
@@ -347,8 +373,5 @@ class CommitCheck():
             print '%s load and %s commit fails were found' % (report.count('LOAD FAIL'),
                                                                      report.count('COMMIT FAIL'))
         
-    def commit_check_normal(self):
-        """Load and commit check every composite config - fail fast by default"""
-        self.check_templates(self.templates, 'normal')
 
         
