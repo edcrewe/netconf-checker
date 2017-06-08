@@ -31,9 +31,10 @@ class DiffCheck():
         self.logfile =  'switchdiff.log' 
         
     def compare_templates(self, match='exact'):
-        """Compare templates for commit1 and commit2 (src and target) for specified step - eg. switches, firewall or dhcp"""
+        """Compare templates for src and target, eg commit1 and commit2, for specified step - eg. switches, firewall or dhcp"""
         fail_msg = ''
-        flag_matched = 0
+        count_matched = 0
+        count_failed = 0
         if match == 'exact':
             # Test full run of all templates from LA are in NG and are exactly the same - not sure this will ever be the case!
             if os.path.isdir(self.src):
@@ -47,19 +48,27 @@ class DiffCheck():
                     target_tmpl = os.path.join(self.target, tmpl)
                     src = self.switch.get_data(src_tmpl)
                     if os.path.exists(target_tmpl):
-                        flag_matched += 1
+                        count_matched += 1
                         target = self.switch.get_data(target_tmpl)
                         diffs, msg = self.switch.diff_dict(src, target)
                         fail_msg += msg
-                if not flag_matched:
-                    fail_msg += 'We didnt match any configs between new and fixtures'
+                        if diffs:
+                            count_failed += 1
+                if not count_matched:
+                    fail_msg += 'We didnt match any configs between %s and %s' % (self.src, self.target)
             else:
+                count_matched = 1
                 src = self.switch.get_data(self.src)
                 target = self.switch.get_data(self.target)
                 diffs, fail_msg = self.switch.diff_dict(src, target)
-        if not fail_msg:
-            self.write_log('\nPASS: Switches step - Matched %s switch configs' % flag_matched)
-        return fail_msg
+                if diffs:
+                    count_failed = 1
+        if fail_msg:
+            msg = 'FAIL: Failed to match %s pairs of %s configs' % (count_failed, count_matched)
+        else:
+            msg = 'PASS: Matched %s pairs of configs' % count_matched
+        self.write_log(msg + fail_msg)
+        return msg
             
     def write_log(self, msg):
         with open(self.logfile, 'a+') as logfh:
@@ -67,8 +76,5 @@ class DiffCheck():
 
     def run(self):
         """Run switches for commit 2 and check outputs are created"""
-        diff = self.compare_templates(self.match)
-        if diff:
-            self.write_log('\n### test_106 Diff found for switches step ###\n %s' % diff)
-        assert not diff, '\n\n### test_106 Diff found for database at racks step written to %s ###\n' % self.logfile
-
+        print self.compare_templates(self.match)
+        print "See the log at %s" % self.logfile 

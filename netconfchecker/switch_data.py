@@ -79,7 +79,6 @@ class SwitchData(object):
             if partdict:
                 new.update(partdict)
         return new
-    
 
     def diff_dict(self, old, new):
         """diff dict as assert equal
@@ -91,7 +90,14 @@ class SwitchData(object):
         try:
             assert_equal(old, new)
         except AssertionError, err:
-            # diffs['all'] = err
+            errlines = str(err).split('\n')
+            errlines = [line for line in errlines if line.find('@@')==-1]
+            length = len(errlines)
+            errmsg = ''
+            for i, line in enumerate(errlines):
+                if line.strip().startswith('-') and not line.startswith('--'):
+                    pos = int(100 * i/length)
+                    errmsg += '\n--- %s' % pos + '% ---\n' + '\n'.join(errlines[i-1:i+2])
             # Break down the diffs to each top level key
             for key in new:
                 old_sub = old.get(key, None)
@@ -99,8 +105,4 @@ class SwitchData(object):
                     assert_equal(old_sub, new[key])
                 except AssertionError, err:
                     diffs[key] = err
-        msg = ''
-        if diffs:
-            for key, value in diffs.items():
-                msg += '\n\n%s diff: %s' % (key, value)
-        return diffs, msg
+        return diffs, errmsg
