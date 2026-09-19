@@ -1,6 +1,8 @@
 netconf-checker
 ===============
 
+⚠️ **DEPRECATED:** This repository is no longer maintained. It is kept here for historical purposes only.
+
 Ed Crewe June 2017
 
 A tool to load, commit check and diff vendor router/switch configs
